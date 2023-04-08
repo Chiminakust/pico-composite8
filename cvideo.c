@@ -14,19 +14,19 @@
  *-----------------------------------------------
 */
 /*
-    Copyright (C) 2021 Bill Neisius <obstruse@earthlink.net>
+	Copyright (C) 2021 Bill Neisius <obstruse@earthlink.net>
 
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, version 3 of the License.
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, version 3 of the License.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 #define TESTPATTERN
@@ -56,11 +56,17 @@ void cvideo_dma_handler(void);
 const int   VIDEO_frame_lines = 525;
 const int   VIDEO_frame_lines_visible = 480;
 const float VIDEO_aspect_ratio = 4.0/3.0;
+/* TESTING new values */
+//const float VIDEO_horizontal_freq = 15750.0;
+//const float VIDEO_h_FP_usec = 1.5;	// front porch
+//const float VIDEO_h_SYNC_usec = 4.7;	// sync
+//const float VIDEO_h_BP_usec = 4.7;	// back porch
+//const float VIDEO_h_EP_usec = 2.3;	// equalizing pulse
 const float VIDEO_horizontal_freq = 15750.0;
-const float VIDEO_h_FP_usec = 1.5;	// front porch
-const float VIDEO_h_SYNC_usec = 4.7;	// sync
-const float VIDEO_h_BP_usec = 4.7;	// back porch
-const float VIDEO_h_EP_usec = 2.3;	// equalizing pulse
+const float VIDEO_h_FP_usec = 1.5;       // front porch
+const float VIDEO_h_SYNC_usec = 4.7;     // sync
+const float VIDEO_h_BP_usec = (4.7 * 2); // back porch
+const float VIDEO_h_EP_usec = 2.3;       // equalizing pulse
 
 /*-------------------------------------------------------------------*/
 /*------------------Horizontal Derived-------------------------------*/
@@ -119,7 +125,9 @@ int bmCount = 0;
 #include "indian.h"
 //#include "gradient4.h"
 //#include "demo.h"
-unsigned char * bitmap = (unsigned char *)indian;
+#include "demotest.h"
+//unsigned char * bitmap = (unsigned char *)indian;
+unsigned char * bitmap = (unsigned char *)demotest;
 #else
 unsigned char bitmap[width*height]={[0 ... width*height-1] = WHITE};
 #endif
@@ -135,41 +143,43 @@ volatile bool changeBitmap  = false;
 
 /*-------------------------------------------------------------------*/
 void second_core() {
-    unsigned char * dataCount = (unsigned char *)0x10050000;
-    unsigned char * dataStart = (unsigned char *)0x10050001;
-    //int bmMax = *dataCount / 4;		// using the low-res bitmaps for testing
-    int bmMax = *dataCount;
-    bmIndex = 0; 			
+	unsigned char * dataCount = (unsigned char *)0x10050000;
+	unsigned char * dataStart = (unsigned char *)0x10050001;
+	//int bmMax = *dataCount / 4;		// using the low-res bitmaps for testing
+	int bmMax = *dataCount;
+	bmIndex = 0;
 
-    while (true) {
+	while (true) {
 #ifdef TESTPATTERN
 #else
-	    while (vline >= VERT_vblank ) {
-		busy_wait_us(HORIZ_usec);
-	    }
+		/* this is the slideshow */
 
-	    changeBitmap = true;	// DMA interrupt now starts sending BLACK instead of bitmap
+		while (vline >= VERT_vblank ) {
+			busy_wait_us(HORIZ_usec);
+		}
 
-            bmIndex++;
-            if ( bmIndex >= bmMax ) {
-                    bmIndex = 0;
-            }
+		changeBitmap = true;	// DMA interrupt now starts sending BLACK instead of bitmap
 
-	    memcpy(bitmap, dataStart + (width * height * bmIndex), width*height);
+		bmIndex++;
+		if ( bmIndex >= bmMax ) {
+			bmIndex = 0;
+		}
 
-	    // settling time
-	    busy_wait_us(HORIZ_usec*VERT_scanlines);
+		memcpy(bitmap, dataStart + (width * height * bmIndex), width*height);
 
-            while (vline >= VERT_vblank ) {
-                busy_wait_us(HORIZ_usec);
-            }
+		// settling time
+		busy_wait_us(HORIZ_usec*VERT_scanlines);
 
-	    changeBitmap = false;	// ...switch back to displaying bitmap
+		while (vline >= VERT_vblank ) {
+			busy_wait_us(HORIZ_usec);
+		}
 
-	    //sleep_ms(1000);		// sleep_ms() causes a visible glitch
-	    busy_wait_us(1000000);
+		changeBitmap = false;	// ...switch back to displaying bitmap
+
+		//sleep_ms(1000);		// sleep_ms() causes a visible glitch
+		busy_wait_us(1000000);
 #endif
-    }
+	}
 }
 
 /*-------------------------------------------------------------------*/
@@ -178,55 +188,62 @@ int main() {
 //	sleep_ms(2000);
 //	printf("Start of program\n");
 
-     multicore_launch_core1(second_core);
 
-    vsync_ll = (unsigned char *)malloc(HORIZ_dots);
-    memset(vsync_ll, SYNC, HORIZ_dots);				// vertical sync/serrations
-    memset(vsync_ll + (HORIZ_dots>>1) - HORIZ_SYNC_dots, BLANK, HORIZ_SYNC_dots);
-    memset(vsync_ll + HORIZ_dots      - HORIZ_SYNC_dots, BLANK, HORIZ_SYNC_dots);
+	/* TESTING */
+	/* bitmap[height=384][width=512] */
+	for (int i = 100; i < 200; ++i) {
+		memset((void *) &bitmap[i * width + 100], BLACK, 100);
+	}
 
-    vsync_ss = (unsigned char *)malloc(HORIZ_dots);
-    memset(vsync_ss, BLANK, HORIZ_dots);				// vertical equalizing
-    memset(vsync_ss, SYNC, HORIZ_EP_dots);
-    memset(vsync_ss + (HORIZ_dots>>1), SYNC, HORIZ_EP_dots);
+	multicore_launch_core1(second_core);
 
-    vsync_bb = (unsigned char *)malloc(HORIZ_dots);
-    memset(vsync_bb, BLANK, HORIZ_dots);				// vertical blanking
-    memset(vsync_bb, SYNC, HORIZ_SYNC_dots);
+	vsync_ll = (unsigned char *)malloc(HORIZ_dots);
+	memset(vsync_ll, SYNC, HORIZ_dots);				// vertical sync/serrations
+	memset(vsync_ll + (HORIZ_dots>>1) - HORIZ_SYNC_dots, BLANK, HORIZ_SYNC_dots);
+	memset(vsync_ll + HORIZ_dots      - HORIZ_SYNC_dots, BLANK, HORIZ_SYNC_dots);
 
-    vsync_ssb = (unsigned char *)malloc(HORIZ_dots+(HORIZ_dots>>1));
-    memset(vsync_ssb, BLANK, HORIZ_dots + (HORIZ_dots>>1));		// vertical equalizing/blanking
-    memset(vsync_ssb, SYNC, HORIZ_EP_dots);
-    memset(vsync_ssb + (HORIZ_dots>>1), SYNC, HORIZ_EP_dots);
+	vsync_ss = (unsigned char *)malloc(HORIZ_dots);
+	memset(vsync_ss, BLANK, HORIZ_dots);				// vertical equalizing
+	memset(vsync_ss, SYNC, HORIZ_EP_dots);
+	memset(vsync_ss + (HORIZ_dots>>1), SYNC, HORIZ_EP_dots);
 
-    // This bit pre-builds the border scanline and pixel buffers
-    border = (unsigned char *)malloc(HORIZ_dots);
-    memset(border, border_colour, HORIZ_dots);			// Fill the border with the border colour
-    memset(border, SYNC, HORIZ_SYNC_dots);		        // Add the hsync pulse
-    memset(border + HORIZ_SYNC_dots,            BLANK, HORIZ_BP_dots);
-    memset(border + HORIZ_dots - HORIZ_FP_dots, BLANK, HORIZ_FP_dots);		// front porch
+	vsync_bb = (unsigned char *)malloc(HORIZ_dots);
+	memset(vsync_bb, BLANK, HORIZ_dots);				// vertical blanking
+	memset(vsync_bb, SYNC, HORIZ_SYNC_dots);
 
-    pixel_buffer[0] = (unsigned char *)malloc(HORIZ_dots);
-    memcpy(pixel_buffer[0], border, HORIZ_dots);			// pixel buffer
-    pixel_buffer[1] = (unsigned char *)malloc(HORIZ_dots);
-    memcpy(pixel_buffer[1], border, HORIZ_dots);			// pixel buffer
+	vsync_ssb = (unsigned char *)malloc(HORIZ_dots+(HORIZ_dots>>1));
+	memset(vsync_ssb, BLANK, HORIZ_dots + (HORIZ_dots>>1));		// vertical equalizing/blanking
+	memset(vsync_ssb, SYNC, HORIZ_EP_dots);
+	memset(vsync_ssb + (HORIZ_dots>>1), SYNC, HORIZ_EP_dots);
 
-    // Initialise the PIO
-    PIO pio = pio0;
-    uint offset = pio_add_program(pio, &cvideo_program);	// Load up the PIO program
-    pio_sm_set_enabled(pio, state_machine, false);          // Disable the PIO state machine
-    pio_sm_clear_fifos(pio, state_machine);	                // Clear the PIO FIFO buffers
-    cvideo_initialise_pio(pio, state_machine, offset, 0, 8, PIO_clkdiv); // Initialise the PIO (function in cvideo.pio)
+	// This bit pre-builds the border scanline and pixel buffers
+	border = (unsigned char *)malloc(HORIZ_dots);
+	memset(border, border_colour, HORIZ_dots);			// Fill the border with the border colour
+	memset(border, SYNC, HORIZ_SYNC_dots);		        // Add the hsync pulse
+	memset(border + HORIZ_SYNC_dots,            BLANK, HORIZ_BP_dots);
+	memset(border + HORIZ_dots - HORIZ_FP_dots, BLANK, HORIZ_FP_dots);		// front porch
 
-    dma_channel = dma_claim_unused_channel(true);		    // Claim a DMA channel for the hsync transfer
-    cvideo_configure_pio_dma(pio, state_machine, dma_channel, HORIZ_dots); // Hook up the DMA channel to the state machine
+	pixel_buffer[0] = (unsigned char *)malloc(HORIZ_dots);
+	memcpy(pixel_buffer[0], border, HORIZ_dots);			// pixel buffer
+	pixel_buffer[1] = (unsigned char *)malloc(HORIZ_dots);
+	memcpy(pixel_buffer[1], border, HORIZ_dots);			// pixel buffer
 
-    // And kick everything off
-    pio_sm_set_enabled(pio, state_machine, true);           // Enable the PIO state machine
+	// Initialise the PIO
+	PIO pio = pio0;
+	uint offset = pio_add_program(pio, &cvideo_program);	// Load up the PIO program
+	pio_sm_set_enabled(pio, state_machine, false);          // Disable the PIO state machine
+	pio_sm_clear_fifos(pio, state_machine);	                // Clear the PIO FIFO buffers
+	cvideo_initialise_pio(pio, state_machine, offset, 0, 8, PIO_clkdiv); // Initialise the PIO (function in cvideo.pio)
 
-    while (true) {                                          // And then just loop doing nothing
+	dma_channel = dma_claim_unused_channel(true);		    // Claim a DMA channel for the hsync transfer
+	cvideo_configure_pio_dma(pio, state_machine, dma_channel, HORIZ_dots); // Hook up the DMA channel to the state machine
+
+	// And kick everything off
+	pio_sm_set_enabled(pio, state_machine, true);           // Enable the PIO state machine
+
+	while (true) {                                          // And then just loop doing nothing
 	tight_loop_contents();
-    }
+	}
 }
 
 /*-------------------------------------------------------------------*/
@@ -235,19 +252,19 @@ int main() {
 
 void cvideo_dma_handler(void) {
 
-    if ( ++vline <= VERT_scanlines ) {
-    } else {
-        vline = 0;
-	    bline = 0;
-	    field = ++field & 0x01;
-    }
+	if ( ++vline <= VERT_scanlines ) {
+	} else {
+		vline = 0;
+		bline = 0;
+		field = ++field & 0x01;
+	}
 
-    while (true) {
-        if ( vline <= VERT_vblank ) {
+	while (true) {
+		if ( vline <= VERT_vblank ) {
 
-            switch(vline) {
+			switch(vline) {
 
-            case 0:
+			case 0:
 		// for some reason interlace fails unless there's a 30usec delay here:
 		busy_wait_us(HORIZ_usec/2);
 
@@ -255,99 +272,99 @@ void cvideo_dma_handler(void) {
 			// odd field - blank, full line
 			dma_channel_set_read_addr(dma_channel, vsync_bb, true);
 
-                } else {
+				} else {
 			// even field - blank, half line
 			dma_channel_set_trans_count(dma_channel, HORIZ_dots/2, false);
 			dma_channel_set_read_addr(dma_channel, vsync_bb, true);
-                }
+				}
 
 		break;
 
-            case 1:
+			case 1:
 		dma_channel_set_trans_count(dma_channel, HORIZ_dots, false);   // reset transfer size
-            case 2 ... 3:
-                // send 3 vsync_ss - 'equalizing pulses'
-                dma_channel_set_read_addr(dma_channel, vsync_ss, true);
+			case 2 ... 3:
+				// send 3 vsync_ss - 'equalizing pulses'
+				dma_channel_set_read_addr(dma_channel, vsync_ss, true);
 
-                break;
+				break;
 
-            case 4 ... 6:
-                // send 3 vsync_ll - 'vertical sync/serrations'
-                dma_channel_set_read_addr(dma_channel, vsync_ll, true);
+			case 4 ... 6:
+				// send 3 vsync_ll - 'vertical sync/serrations'
+				dma_channel_set_read_addr(dma_channel, vsync_ll, true);
 
-                break;
+				break;
 
-            case 7 ... 8:
-                // send 3 vsync_ss - 'equalizing pulses'
-                dma_channel_set_read_addr(dma_channel, vsync_ss, true);
+			case 7 ... 8:
+				// send 3 vsync_ss - 'equalizing pulses'
+				dma_channel_set_read_addr(dma_channel, vsync_ss, true);
 
-                break;
+				break;
 
-	    case 9:
+		case 9:
 		if ( field ) {
 			// odd field - equalizing pulse, full line
 			dma_channel_set_read_addr(dma_channel, vsync_ss, true);
 
-           	} else {
+				} else {
 			//even field - equalizing pulse, line and a half
 			dma_channel_set_trans_count(dma_channel, HORIZ_dots + HORIZ_dots/2, false);
 			dma_channel_set_read_addr(dma_channel, vsync_ssb, true);
-     		}
+			}
 
 		break;
 
-            case 10:
+			case 10:
 		// everything back to normal
 		dma_channel_set_trans_count(dma_channel, HORIZ_dots, false);   // reset transfer size
-	    default:
-                // send BLANK till end of vertical blanking
-                dma_channel_set_read_addr(dma_channel, vsync_bb, true);
+		default:
+				// send BLANK till end of vertical blanking
+				dma_channel_set_read_addr(dma_channel, vsync_bb, true);
 
-                break;
+				break;
 
-            }
+			}
 
-            break;
-        }
-
-        if ( vline <= VERT_vblank + VERT_border ) {
-
-            if (changeBitmap) {
-                dma_channel_set_read_addr(dma_channel, vsync_bb, true);
-            } else {
-                dma_channel_set_read_addr(dma_channel, border, true);
-		if ( vline == VERT_vblank + VERT_border ) {
-		    memcpy(pixel_buffer[bline & 1] + HORIZ_pixel_start, bitmap+(bline*2+field)*width, width);
+			break;
 		}
 
-            }
+		if ( vline <= VERT_vblank + VERT_border ) {
 
-            break;
-        }
+			if (changeBitmap) {
+				dma_channel_set_read_addr(dma_channel, vsync_bb, true);
+			} else {
+				dma_channel_set_read_addr(dma_channel, border, true);
+		if ( vline == VERT_vblank + VERT_border ) {
+			memcpy(pixel_buffer[bline & 1] + HORIZ_pixel_start, bitmap+(bline*2+field)*width, width);
+		}
 
-        if ( vline <= VERT_vblank + VERT_border + VERT_bitmap  ) {
+			}
 
-	    if (changeBitmap) {
-                dma_channel_set_read_addr(dma_channel, vsync_bb, true);
-	    } else {
-                dma_channel_set_read_addr(dma_channel, pixel_buffer[bline++ & 1], true);    // Set the DMA to read from one of the pixel_buffers
-                memcpy(pixel_buffer[bline & 1] + HORIZ_pixel_start, bitmap+(bline*2+field)*width, width);       // And memcpy the next scanline
-	    }
-            break;
-        }
+			break;
+		}
 
-        // otherwise, just output border until end of scanlines
+		if ( vline <= VERT_vblank + VERT_border + VERT_bitmap  ) {
+
+		if (changeBitmap) {
+			dma_channel_set_read_addr(dma_channel, vsync_bb, true);
+		} else {
+			dma_channel_set_read_addr(dma_channel, pixel_buffer[bline++ & 1], true);    // Set the DMA to read from one of the pixel_buffers
+			memcpy(pixel_buffer[bline & 1] + HORIZ_pixel_start, bitmap+(bline*2+field)*width, width);       // And memcpy the next scanline
+		}
+			break;
+		}
+
+		// otherwise, just output border until end of scanlines
 	if (changeBitmap) {
-            dma_channel_set_read_addr(dma_channel, vsync_bb, true);
+			dma_channel_set_read_addr(dma_channel, vsync_bb, true);
 	} else {
-            dma_channel_set_read_addr(dma_channel, border, true);
+			dma_channel_set_read_addr(dma_channel, border, true);
 	}
 
-        break;
-    }
+		break;
+	}
 
-    // Finally, clear the interrupt request ready for the next horizontal sync interrupt
-    dma_hw->ints0 = 1u << dma_channel;
+	// Finally, clear the interrupt request ready for the next horizontal sync interrupt
+	dma_hw->ints0 = 1u << dma_channel;
 }
 
 /*-------------------------------------------------------------------*/
@@ -359,21 +376,21 @@ void cvideo_dma_handler(void) {
 // - buffer_size_words: Number of bytes to transfer
 //
 void cvideo_configure_pio_dma(PIO pio, uint sm, uint dma_channel, size_t buffer_size_words) {
-    pio_sm_clear_fifos(pio, sm);
-    dma_channel_config c = dma_channel_get_default_config(dma_channel);
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-    channel_config_set_read_increment(&c, true);
-    channel_config_set_dreq(&c, pio_get_dreq(pio, sm, true));
+	pio_sm_clear_fifos(pio, sm);
+	dma_channel_config c = dma_channel_get_default_config(dma_channel);
+	channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+	channel_config_set_read_increment(&c, true);
+	channel_config_set_dreq(&c, pio_get_dreq(pio, sm, true));
 
-    dma_channel_configure(dma_channel, &c,
-                          &pio->txf[sm],              // Destination - PIO queue
-                          vsync_bb,                   // Source - Equalizing Pulses
-                          buffer_size_words,          // Number of transfers
-                          true                        // Start - queue the Source to the Destination
-                         );
+	dma_channel_configure(dma_channel, &c,
+	                      &pio->txf[sm],              // Destination - PIO queue
+	                      vsync_bb,                   // Source - Equalizing Pulses
+	                      buffer_size_words,          // Number of transfers
+	                      true                        // Start - queue the Source to the Destination
+	);
 
-    dma_channel_set_irq0_enabled(dma_channel, true);
+	dma_channel_set_irq0_enabled(dma_channel, true);
 
-    irq_set_exclusive_handler(DMA_IRQ_0, cvideo_dma_handler);
-    irq_set_enabled(DMA_IRQ_0, true);
+	irq_set_exclusive_handler(DMA_IRQ_0, cvideo_dma_handler);
+	irq_set_enabled(DMA_IRQ_0, true);
 }
