@@ -29,7 +29,10 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#define TESTPATTERN
+//#define TESTPATTERN
+
+#include "terminal.h"
+#include "common.h"
 
 #include <stdlib.h>
 //#include <stdio.h>
@@ -46,8 +49,6 @@ void cvideo_configure_pio_dma(PIO pio, uint sm, uint dma_channel, size_t buffer_
 void cvideo_dma_handler(void);
 #include "cvideo.pio.h"     // The assembled PIO code
 
-#define width 512           // Bitmap width in pixels
-#define height 384          // Bitmap height in pixels
 
 /*-------------------------------------------------------------------*/
 /*------------------Video Standard-----------------------------------*/
@@ -103,10 +104,11 @@ const float PIO_clkdiv = PIO_sysclk / VIDEO_horizontal_freq / PIO_clkdot / HORIZ
 /*------------------Gray Scale---------------------------------------*/
 /*-------------------------------------------------------------------*/
 // NTSC in IRE units+40: SYNC = 0; BLANK = 40; BLACK = 47.5; WHITE = 140
-const int WHITE = 255;
-const int BLACK = 255.0 / 140.0 * 47.5;
+//const int WHITE = 255;
+//const int BLACK = 255.0 / 140.0 * 47.5;
 const int BLANK = 255.0 / 140.0 * 40.0;
 const int SYNC = 0;
+
 
 #define border_colour BLACK
 
@@ -120,6 +122,7 @@ uint field = 0;		    // field, even/odd
 int bmIndex = 0;
 int bmCount = 0;
 
+
 // bitmap buffer
 #ifdef TESTPATTERN
 #include "indian.h"
@@ -129,7 +132,7 @@ int bmCount = 0;
 //unsigned char * bitmap = (unsigned char *)indian;
 unsigned char * bitmap = (unsigned char *)demotest;
 #else
-unsigned char bitmap[width*height]={[0 ... width*height-1] = WHITE};
+unsigned char bitmap[width * height] = { [0 ... width * height - 1] = BLACK };
 #endif
 
 unsigned char * vsync_ll;                             // buffer for a vsync line with a long/long pulse
@@ -152,32 +155,8 @@ void second_core() {
 	while (true) {
 #ifdef TESTPATTERN
 #else
-		/* this is the slideshow */
 
-		while (vline >= VERT_vblank ) {
-			busy_wait_us(HORIZ_usec);
-		}
-
-		changeBitmap = true;	// DMA interrupt now starts sending BLACK instead of bitmap
-
-		bmIndex++;
-		if ( bmIndex >= bmMax ) {
-			bmIndex = 0;
-		}
-
-		memcpy(bitmap, dataStart + (width * height * bmIndex), width*height);
-
-		// settling time
-		busy_wait_us(HORIZ_usec*VERT_scanlines);
-
-		while (vline >= VERT_vblank ) {
-			busy_wait_us(HORIZ_usec);
-		}
-
-		changeBitmap = false;	// ...switch back to displaying bitmap
-
-		//sleep_ms(1000);		// sleep_ms() causes a visible glitch
-		busy_wait_us(1000000);
+		terminal_loop();
 #endif
 	}
 }
@@ -188,12 +167,7 @@ int main() {
 //	sleep_ms(2000);
 //	printf("Start of program\n");
 
-
-	/* TESTING */
-	/* bitmap[height=384][width=512] */
-	for (int i = 100; i < 200; ++i) {
-		memset((void *) &bitmap[i * width + 100], BLACK, 100);
-	}
+	terminal_init_uart();
 
 	multicore_launch_core1(second_core);
 

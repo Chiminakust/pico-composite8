@@ -9,7 +9,7 @@ add_executable(pico-composite8)
 
 pico_generate_pio_header(pico-composite8 ${CMAKE_CURRENT_LIST_DIR}/cvideo.pio)
 
-target_sources(pico-composite8 PRIVATE cvideo.c)
+target_sources(pico-composite8 PRIVATE cvideo.c terminal.c)
 
 target_link_libraries(pico-composite8 
 	PRIVATE 
