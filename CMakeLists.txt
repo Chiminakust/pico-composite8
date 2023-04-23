@@ -28,6 +28,16 @@ target_link_libraries(pico-composite8
 
 pico_add_extra_outputs(pico-composite8)
 
+# tiny usb stuff
+
+# for tusb_config.h
+target_include_directories(pico-composite8 PUBLIC
+	${CMAKE_CURRENT_LIST_DIR})
+
+# In addition to pico_stdlib required for common PicoSDK functionality, add dependency on tinyusb_host
+# for TinyUSB device support and tinyusb_board for the additional board support library used by the example
+target_link_libraries(pico-composite8 PUBLIC pico_stdlib tinyusb_host tinyusb_board)
+
 # add url via pico_set_program_url
 # example_auto_set_url(pico-composite8)
 

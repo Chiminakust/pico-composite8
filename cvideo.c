@@ -38,6 +38,9 @@
 //#include <stdio.h>
 #include "memory.h"
 
+#include "bsp/board.h"
+#include "tusb.h"
+
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 
@@ -144,6 +147,10 @@ unsigned char * pixel_buffer[2];                      // Double-buffer for the p
 
 volatile bool changeBitmap  = false;
 
+
+extern void hid_app_task(void);
+
+
 /*-------------------------------------------------------------------*/
 void second_core() {
 	unsigned char * dataCount = (unsigned char *)0x10050000;
@@ -152,9 +159,20 @@ void second_core() {
 	int bmMax = *dataCount;
 	bmIndex = 0;
 
+	board_init();
+
+	/* init tiny usb */
+	//tusb_init();
+	tuh_init(BOARD_TUH_RHPORT);
+
 	while (true) {
 #ifdef TESTPATTERN
 #else
+		/* usb host task */
+		tuh_task();
+
+		/* usb hid (keyboard) task */
+		//hid_app_task();
 
 		terminal_loop();
 #endif
@@ -216,7 +234,9 @@ int main() {
 	pio_sm_set_enabled(pio, state_machine, true);           // Enable the PIO state machine
 
 	while (true) {                                          // And then just loop doing nothing
-	tight_loop_contents();
+
+		//tuh_task();
+		tight_loop_contents();
 	}
 }
 
