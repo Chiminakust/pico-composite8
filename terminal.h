@@ -3,7 +3,7 @@
 
 
 /* public functions */
-void terminal_init_uart(void);
+void terminal_init(void);
 void terminal_loop(void);
 
 

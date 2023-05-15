@@ -39,7 +39,6 @@
 #include "memory.h"
 
 #include "bsp/board.h"
-#include "tusb.h"
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -161,18 +160,10 @@ void second_core() {
 
 	board_init();
 
-	/* init tiny usb */
-	//tusb_init();
-	tuh_init(BOARD_TUH_RHPORT);
 
 	while (true) {
 #ifdef TESTPATTERN
 #else
-		/* usb host task */
-		tuh_task();
-
-		/* usb hid (keyboard) task */
-		//hid_app_task();
 
 		terminal_loop();
 #endif
@@ -185,7 +176,7 @@ int main() {
 //	sleep_ms(2000);
 //	printf("Start of program\n");
 
-	terminal_init_uart();
+	terminal_init();
 
 	multicore_launch_core1(second_core);
 

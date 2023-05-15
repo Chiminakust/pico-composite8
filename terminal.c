@@ -1,14 +1,15 @@
 #include "terminal.h"
 
+#include "keycodes.h"
 #include "common.h"
 #include "font.h"
 
 #include "bsp/board.h"
-#include "tusb.h"
 
 #include "pico/stdlib.h"
 
 #include "hardware/pio.h"
+#include "hardware/gpio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "hardware/uart.h"
@@ -24,12 +25,6 @@
 
 #define MAX_REPORT 4
 
-static uint8_t const keycode2ascii[128][2] = { HID_KEYCODE_TO_ASCII };
-
-static struct {
-	uint8_t report_count;
-	tuh_hid_report_info_t report_info[MAX_REPORT];
-} hid_info[CFG_TUH_HID];
 
 /* need those from cvideo.c */
 //extern const int WHITE;
@@ -40,8 +35,13 @@ static struct {
 static int posx = gapx;
 static int posy = gapy;
 
-/* debug string buffer */
-static char debugbuf[DEBUG_BUF_LEN];
+/* ring buffer struct for ps/2 keyboard keycodes */
+#define KEYCODES_MAX_NUM 64
+struct {
+	int iread;
+	int iwrite;
+	char buf[KEYCODES_MAX_NUM];
+} keycodes_ringbuf;
 
 
 /* private functions declarations */
@@ -53,25 +53,51 @@ static void print_char(char c);
 static void process_kbd_report(hid_keyboard_report_t const *report);
 static void process_generic_report(uint8_t dev_addr, uint8_t instance,
                                     uint8_t const *report, uint16_t len);
-void hid_app_task(void);
+static void ps2_keycode_callback(uint gpio, uint32_t events);
+static int keycodes_ringbuf_put(char kc);
+static int keycodes_ringbuf_get(char *kc);
+static int keycodes_ringbuf_inc(int idx);
+static int keycodes_ringbuf_dec(int idx);
+static void handle_keycode(char kc);
 
 
 /* public functions definitions */
 
 void
-terminal_init_uart(void)
+terminal_init(void)
 {
-	//board_init();
-
-	/* init tiny usb */
-	//tusb_init();
-	//tuh_init(BOARD_TUH_RHPORT);
-
 	uart_init(uart0, 115200);
 	gpio_set_function(12, GPIO_FUNC_UART);  // TX
 	gpio_set_function(13, GPIO_FUNC_UART);  // RX
 
-	//printf("terminal init done\r\n");
+	/* interrupt pin */
+	gpio_set_irq_enabled_with_callback(16, GPIO_IRQ_EDGE_RISE, true, &ps2_keycode_callback);
+
+	/* GPIO inputs (8 bits) */
+	gpio_init(27);
+	gpio_init(26);
+	gpio_init(22);
+	gpio_init(21);
+	gpio_init(20);
+	gpio_init(19);
+	gpio_init(18);
+	gpio_init(17);
+	gpio_set_dir(27, GPIO_IN);
+	gpio_set_dir(26, GPIO_IN);
+	gpio_set_dir(22, GPIO_IN);
+	gpio_set_dir(21, GPIO_IN);
+	gpio_set_dir(20, GPIO_IN);
+	gpio_set_dir(19, GPIO_IN);
+	gpio_set_dir(18, GPIO_IN);
+	gpio_set_dir(17, GPIO_IN);
+	gpio_pull_up(27);
+	gpio_pull_up(26);
+	gpio_pull_up(22);
+	gpio_pull_up(21);
+	gpio_pull_up(20);
+	gpio_pull_up(19);
+	gpio_pull_up(18);
+	gpio_pull_up(17);
 }
 
 
@@ -79,13 +105,14 @@ void
 terminal_loop(void)
 {
 	char c;
+	char last_keycode;
 
 	for (;;) {
-		/* usb host task */
-		//tuh_task();
-		/* usb hid (keyboard) task */
-		//hid_app_task(); // does nothing anyway
-		//printf("loop\r\n");
+		/* handle keyboard inputs */
+
+		while (keycodes_ringbuf_get(&last_keycode) == 0) {
+			handle_keycode(last_keycode);
+		}
 
 		/* get next char from UART (blocking) */
 		/* TODO: setup timeout and blink cursor on timeout */
@@ -94,7 +121,7 @@ terminal_loop(void)
 			if (uart_is_readable(uart0)) {
 				break;
 			}
-			sleep_ms(100);
+			sleep_ms(10);
 		}
 		if (timeout <= 0) {
 			continue;
@@ -198,176 +225,111 @@ print_char(char c)
 	//}
 }
 
-void
-hid_app_task(void)
-{
-	/* nothing to do */
-}
-
-
-/* tiny usb callbacks */
-
-/* usb HID device mounted callback */
-void
-tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
-                 uint8_t const *desc_report, uint16_t desc_len)
-{
-	//printf("hid mount callback\r\n");
-	/* itf_protocol = 0: None, 1: Keyboard, 2: mouse */
-	uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-	//printf("device mount addr %x instance %x\r\n", dev_addr, instance);
-
-	/*
-	 * By default, host stack will use activate boot protocol on supported interface.
-	 * We only need to parse generic report descriptor with the built-in parser.
-	 */
-	if (itf_protocol == HID_ITF_PROTOCOL_NONE) {
-		hid_info[instance].report_count = tuh_hid_parse_report_descriptor(
-			hid_info[instance].report_info,
-			MAX_REPORT,
-			desc_report,
-			desc_len
-			);
-	}
-
-	if ( !tuh_hid_receive_report(dev_addr, instance) )
-	{
-		/* error */
-	}
-}
-
-/* device unmounted callback */
-void
-tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
-{
-	/* nothing to do */
-	//printf("unmount addr %x instance %x\r\n", dev_addr, instance);
-}
-
-/* called when received report from device via interrupt endpoint */
-void
-tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
-                           uint8_t const* report, uint16_t len)
-{
-	uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-	//printf("%x-%x report received\r\n", dev_addr, instance);
-
-	switch (itf_protocol) {
-	case HID_ITF_PROTOCOL_KEYBOARD:
-		//printf("it's a keyboard\r\n", dev_addr, instance);
-
-		process_kbd_report( (hid_keyboard_report_t const*) report );
-		break;
-	default:
-		// Generic report requires matching ReportID and contents with previous parsed report info
-		process_generic_report(dev_addr, instance, report, len);
-		break;
-	}
-
-	// continue to request to receive report
-	if ( !tuh_hid_receive_report(dev_addr, instance) )
-	{
-		//printf("error when requesting to continue receiving reports\r\n");
-		/* error */
-	}
-}
-
-/* usb keyboard stuff */
-
-/* find new keys in previous keys */
-static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8_t keycode)
-{
-	for(uint8_t i = 0; i < 6; ++i) {
-		if (report->keycode[i] == keycode) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
 static void
-process_kbd_report(hid_keyboard_report_t const *report)
+ps2_keycode_callback(uint gpio, uint32_t events)
 {
-	/* previous report to check key release */
-	static hid_keyboard_report_t prev_report = { 0, 0, { 0 } };
+	char keycode = 0;
 
-	//printf("kb report process\r\n");
+	keycode |= (!!gpio_get(27)) << 0;
+	keycode |= (!!gpio_get(26)) << 1;
+	keycode |= (!!gpio_get(22)) << 2;
+	keycode |= (!!gpio_get(21)) << 3;
+	keycode |= (!!gpio_get(20)) << 4;
+	keycode |= (!!gpio_get(19)) << 5;
+	keycode |= (!!gpio_get(18)) << 6;
+	keycode |= (!!gpio_get(17)) << 7;
 
-	/* ignore control (non-printable) key effects */
-	for (uint8_t i = 0; i < 6; ++i) {
-		if (report->keycode[i]) {
-
-			//printf("i:%x ch:%x\r\n",
-			//       i, keycode2ascii[report->keycode[i]][(report->modifier &
-			//                                             (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? 1 : 0]);
-
-			if (find_key_in_report(&prev_report, report->keycode[i])) {
-				/* was in previous, ignore */
-			} else {
-				bool const is_shift = (report->modifier &
-					(KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT));
-				uint8_t ch = keycode2ascii[report->keycode[i]][is_shift ? 1 : 0];
-				/* write to UART here */
-				uart_putc(uart0, ch);
-				/* LF for CR */
-				if (ch == '\r') {
-					uart_putc(uart0, '\n');
-				}
-			}
-		}
-	}
-
-	prev_report = *report;
+	keycodes_ringbuf_put(keycode);
 }
 
-/* generic report */
-static void
-process_generic_report(uint8_t dev_addr, uint8_t instance,
-                       uint8_t const* report, uint16_t len)
+
+static int
+keycodes_ringbuf_put(char kc)
 {
-	(void) dev_addr;
+	int next_iwrite = keycodes_ringbuf_inc(keycodes_ringbuf.iwrite);
 
-	//printf("process generic report\r\n");
-
-	uint8_t const rpt_count = hid_info[instance].report_count;
-	tuh_hid_report_info_t *rpt_info_arr = hid_info[instance].report_info;
-	tuh_hid_report_info_t *rpt_info = NULL;
-
-	if (rpt_count == 1 && rpt_info_arr[0].report_id == 0) {
-		/* simple report without report id as 1st byte */
-		rpt_info = &rpt_info_arr[0];
+	/* test if full */
+	if (next_iwrite == keycodes_ringbuf.iread) {
+		/* ringbuf full, do nothing */
+		return -1;
 	} else {
-		/* composite report, 1st byte = report id, data starts from 2nd byte */
-		uint8_t const rpt_id = report[0];
-
-		/* find report id in the array */
-		for (uint8_t i = 0; i < rpt_count; ++i) {
-			if (rpt_id == rpt_info_arr[i].report_id) {
-				rpt_info = &rpt_info_arr[i];
-				break;
-			}
-		}
-
-		report++;
-		len--;
+		/* write to buf, then increment iwrite */
+		keycodes_ringbuf.buf[keycodes_ringbuf.iwrite] = kc;
+		keycodes_ringbuf.iwrite = next_iwrite;
+		return 0;
 	}
+}
 
-	if (!rpt_info) {
-		/* error */
+static int
+keycodes_ringbuf_get(char *kc)
+{
+	/* test if empty */
+	if (keycodes_ringbuf.iread == keycodes_ringbuf.iwrite) {
+		/* nothing to read */
+		return -1;
+	} else {
+		*kc = keycodes_ringbuf.buf[keycodes_ringbuf.iread];
+		keycodes_ringbuf.iread = keycodes_ringbuf_inc(keycodes_ringbuf.iread);
+		return 0;
+	}
+}
+
+
+static int
+keycodes_ringbuf_inc(int idx)
+{
+	if (idx + 1 >= KEYCODES_MAX_NUM) {
+		return 0;
+	} else {
+		return idx + 1;
+	}
+}
+
+
+static int
+keycodes_ringbuf_dec(int idx)
+{
+	if (idx - 1 < 0) {
+		return KEYCODES_MAX_NUM;
+	} else {
+		return idx - 1;
+	}
+}
+
+
+static void
+handle_keycode(char kc)
+{
+	static int release_next = 0;
+	static int ctrl_hold = 0;
+	static int shift_hold = 0;
+
+	printf("keycode 0x%x\n\r", kc);
+
+	if (kc == 0xf0) {
+		/* release next key */
+		release_next = 1;
 		return;
 	}
 
-	/* determine next handler */
-	if (rpt_info->usage_page == HID_USAGE_PAGE_DESKTOP) {
-		switch (rpt_info->usage) {
-		case HID_USAGE_DESKTOP_KEYBOARD:
-			process_kbd_report((hid_keyboard_report_t const *) report);
-			break;
-		default:
-			break;
+	if (KC_IS_SHIFT(kc)) {
+		shift_hold = 1;
+	}
+
+	if (release_next) {
+		release_next = 0;
+		if (KC_IS_SHIFT(kc)) {
+			shift_hold = 0;
 		}
+		return;
+	}
+
+	if ((int) kc < 127) {
+		char c = kbd_US[kc];
+		if (shift_hold && ((c >= 'a') && (c <= 'z'))) {
+			/* convert to uppercase */
+			c -= 32;
+		}
+		printf("%c\n\r", c);
 	}
 }
